@@ -1,0 +1,62 @@
+#!/bin/sh
+
+# Stop and disable routing services
+for i in firewall dnsmasq odhcpd; do
+  if [ -x /etc/init.d/"$i" ]; then
+    /etc/init.d/"$i" disable
+    /etc/init.d/"$i" stop
+  fi
+done
+
+# Bridge Setup: Add WAN port into LAN bridge
+# On RAX3000Q, eth0 is typically WAN, while eth1 is LAN ports.
+# We convert LAN to DHCP client and add eth0 to its interface list.
+uci set network.lan.proto='dhcp'
+uci set network.lan.ifname='eth0 eth1'
+uci delete network.lan.ipaddr
+uci delete network.lan.netmask
+uci del network.lan.ip6assign
+
+# Remove WAN logical interfaces (Physical ports stay in bridge)
+uci delete network.wan
+uci delete network.wan6
+
+# Wi-Fi Setup - Enhanced Detection
+# Iterates through all wireless interfaces to apply settings broadly.
+uci show wireless | grep "=wifi-iface" | cut -d'.' -f2 | cut -d'=' -f1 | while read section; do
+  uci set wireless."$section".ssid='XX'
+  uci set wireless."$section".encryption='psk2+ccmp'
+  uci set wireless."$section".key='12345678'
+  uci set wireless."$section".ieee80211r='1'
+  uci set wireless."$section".mobility_domain='123f'
+  uci set wireless."$section".ft_psk_generate_local='1'
+done
+
+# Enable all radios
+uci show wireless | grep "=wifi-device" | cut -d'.' -f2 | cut -d'=' -f1 | while read radio; do
+  uci set wireless."$radio".disabled='0'
+done
+
+# System/Hostname & Timezone (Cambodia)
+uci set system.@system[0].hostname='XX.3000QY.ap'
+uci set system.@system[0].zonename='Asia/Phnom_Penh'
+uci set system.@system[0].timezone='<+07>-7'
+
+# Clean up DHCP/IPv6 RA services on LAN
+if uci get dhcp.lan >/dev/null 2>&1; then
+  uci del dhcp.lan.ra
+  uci del dhcp.lan.ra_slaac
+  uci del dhcp.lan.ra_flags
+  uci del dhcp.lan.dhcpv6
+fi
+
+uci commit network
+uci commit wireless
+uci commit system
+uci commit dhcp
+
+# Deactivate firewall config file
+[ -f /etc/config/firewall ] && mv /etc/config/firewall /etc/config/firewall.unused
+
+exit 0
+
